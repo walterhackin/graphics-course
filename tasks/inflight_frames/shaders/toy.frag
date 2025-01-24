@@ -5,13 +5,13 @@ layout(location = 0) out vec4 fragColor;
 layout(binding = 0) uniform sampler2D iChannel0;
 layout(binding = 1) uniform sampler2D iChannel1;
 
-layout(push_constant) uniform PushedParams {
-    uint  resolution_x;
-    uint  resolution_y;
+layout(std140, binding = 2) uniform UBO {
+    uint resolution_x;
+    uint resolution_y;
     float time;
     float mouse_x;
     float mouse_y;
-} pc;
+} ubo;
 
 float iTime;
 vec2  iResolution;
@@ -168,14 +168,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
 
     fragColor = vec4(col, 1.0);
 }
+void main() {
+    iResolution = vec2(ubo.resolution_x, ubo.resolution_y);
+    iTime       = ubo.time;
+    iMouse      = vec2(ubo.mouse_x, ubo.mouse_y);
 
-void main()
-{
-    ivec2 fragCoord = ivec2(gl_FragCoord.xy);
-
-    iResolution = vec2(pc.resolution_x, pc.resolution_y);
-    iTime       = pc.time;
-    iMouse      = vec2(pc.mouse_x, pc.mouse_y);
-
-    mainImage(fragColor, vec2(fragCoord));
+    mainImage(fragColor, vec2(gl_FragCoord.xy));
 }

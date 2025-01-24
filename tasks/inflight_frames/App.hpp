@@ -19,7 +19,7 @@
 
 #include "wsi/OsWindowingManager.hpp"
 
-#define FRAMES_IN_FLIGHT 2  // Двойная буферизация
+#define FRAMES_IN_FLIGHT 2
 
 class App
 {
@@ -61,4 +61,7 @@ private:
   } pushedParams;
 
   std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
+
+  std::vector<etna::Buffer> uboBuffers;
+  size_t uboIndex = 0;
 };
