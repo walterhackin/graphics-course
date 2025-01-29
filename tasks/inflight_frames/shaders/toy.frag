@@ -1,28 +1,26 @@
-#version 450
+#version 430
 
-layout(local_size_x = 32, local_size_y = 32) in;
-layout(push_constant) uniform PushParams {
-    uint   size_x;
-    uint   size_y;
-    float  time;
-    float  mouse_x;
-    float  mouse_y;
-} pc;
+layout(location = 0) out vec4 fragColor;
 
-layout(binding = 0, rgba8) uniform image2D outImage;
+layout(binding = 0) uniform sampler2D iChannel0;
+layout(binding = 1) uniform sampler2D iChannel1;
 
-#define iTime       (pc.time)
-#define iResolution vec2(pc.size_x, pc.size_y)
+layout(std140, binding = 2) uniform UBO {
+    uint resolution_x;
+    uint resolution_y;
+    float time;
+    float mouse_x;
+    float mouse_y;
+} ubo;
 
+float iTime;
+vec2  iResolution;
+vec2  iMouse;
 
 #define MAX_STEPS 100
 #define MAX_DIST  100.0
 #define EPSILON   0.001
 
-mat2 rotate2d(float a) {
-    float c = cos(a), s = sin(a);
-    return mat2(c, -s, s, c);
-}
 
 float sdSphere(vec3 p, float r) {
     return length(p) - r;
@@ -35,6 +33,7 @@ float sdPlane(vec3 p) {
 float opUnion(float d1, float d2) {
     return min(d1, d2);
 }
+
 
 float mapScene(vec3 p) {
     float bigSphere = sdSphere(p - vec3(0.0, 1.0, 0.0), 1.0);
@@ -51,10 +50,10 @@ float mapScene(vec3 p) {
     return distScene;
 }
 
+
 vec3 calcNormal(vec3 p) {
     float d = mapScene(p);
     vec2 e = vec2(0.002, 0.0);
-
     vec3 n;
     n.x = mapScene(p + vec3(e.x, e.y, e.y)) - d;
     n.y = mapScene(p + vec3(e.y, e.x, e.y)) - d;
@@ -67,67 +66,93 @@ float rayMarch(vec3 ro, vec3 rd) {
     for(int i = 0; i < MAX_STEPS; i++) {
         vec3 p = ro + rd * t;
         float dist = mapScene(p);
-        if(dist < EPSILON) {
+        if(dist < EPSILON)
             return t;
-        }
         t += dist;
         if(t > MAX_DIST) break;
     }
     return -1.0;
 }
 
-vec3 lighting(vec3 p, vec3 ro, vec3 rd) {
+
+vec3 triPlanarTexture(vec3 p, vec3 n)
+{
+    vec3 an = abs(n);
+    float sum = an.x + an.y + an.z + 1e-8;
+
+    float scale = 1.0;
+
+    vec2 uvx = p.zy * 0.5 * scale;
+    vec2 uvy = p.xz * 0.5 * scale;
+    vec2 uvz = p.xy * 0.5 * scale;
+
+    vec3 tx = texture(iChannel1, uvx).rgb;
+    vec3 ty = texture(iChannel1, uvy).rgb;
+    vec3 tz = texture(iChannel1, uvz).rgb;
+
+    vec3 color = (tx * an.x + ty * an.y + tz * an.z) / sum;
+    return color;
+}
+
+
+vec3 lighting(vec3 p, vec3 ro, vec3 rd)
+{
     vec3 n = calcNormal(p);
 
-    vec3 lightPos   = vec3(3.0, 5.0, 3.0);
-    vec3 lightColor = vec3(1.0, 0.97, 0.9);
+    vec3 baseColor = triPlanarTexture(p, n);
 
+    vec3 lightPos   = vec3(6.0, 5.0, 3.0);
+    vec3 lightColor = vec3(1.0, 0.97, 0.9);
     vec3 L = normalize(lightPos - p);
+
     float diff = max(dot(n, L), 0.0);
 
     vec3 R = reflect(-L, n);
     float spec = pow(max(dot(R, -rd), 0.0), 32.0);
 
-    float shadow = 1.0;
+    float shadow = 1.2;
     {
-        float distToLight = rayMarch(p + n*EPSILON*2.0, L);
+        float distToLight = rayMarch(p + n * EPSILON * 2.0, L);
         float distLight   = length(lightPos - p);
-        if(distToLight > 0.0 && distToLight < distLight) {
+        if(distToLight > 0.0 && distToLight < distLight)
             shadow = 0.2;
-        }
     }
 
     vec3 ambient = vec3(0.05);
 
-    vec3 color = ambient
-               + lightColor * diff * shadow
+    vec3 color = baseColor * (ambient + lightColor * diff * shadow)
                + lightColor * spec * shadow;
 
     color += 0.05 * n;
     return color;
 }
 
-void mainImage(in vec2 fragCoord, out vec4 fragColor)
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord)
 {
     float flippedY = (iResolution.y - 1.0) - fragCoord.y;
     vec2 uv = (vec2(fragCoord.x, flippedY) - 0.5 * iResolution) / iResolution.y;
 
-    float time   = iTime * 0.2;
-    float radius = 5.0;
+    vec2 mouse = iMouse / iResolution;
+    if (iMouse == vec2(0.0)) {
+        mouse = vec2(0.5, 0.5);
+    }
+    float yaw   = (mouse.x * 2.0 - 1.0) * 3.14159;
+    float pitch = (mouse.y - 0.5)       * 3.14159 * 0.5;
 
+    float radius = 5.0;
     vec3 ro = vec3(
-        radius * sin(time),
-        2.0,
-        radius * cos(time)
+        sin(yaw)*cos(pitch)*radius,
+        sin(pitch)*radius + 2.0,
+        cos(yaw)*cos(pitch)*radius
     );
 
     vec3 center = vec3(0.0, 1.0, 0.0);
-
     vec3 cw = normalize(center - ro);
     vec3 cr = normalize(cross(vec3(0,1,0), cw));
     vec3 cu = cross(cw, cr);
 
-    vec3 rd = normalize(uv.x * cr + uv.y * cu + cw);
+    vec3 rd = normalize(uv.x*cr + uv.y*cu + cw);
 
     float t = rayMarch(ro, rd);
 
@@ -135,24 +160,18 @@ void mainImage(in vec2 fragCoord, out vec4 fragColor)
     vec3 skyColorBot = vec3(0.9, 0.9, 1.0);
     vec3 col = mix(skyColorTop, skyColorBot, uv.y + 0.5);
 
-    if(t > 0.0) {
+    if(t > 0.0)
+    {
         vec3 p = ro + rd * t;
         col = lighting(p, ro, rd);
     }
 
     fragColor = vec4(col, 1.0);
 }
+void main() {
+    iResolution = vec2(ubo.resolution_x, ubo.resolution_y);
+    iTime       = ubo.time;
+    iMouse      = vec2(ubo.mouse_x, ubo.mouse_y);
 
-void main()
-{
-    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);
-
-    if(gid.x >= int(pc.size_x) || gid.y >= int(pc.size_y)) {
-        return;
-    }
-
-    vec4 color;
-    mainImage(vec2(gid), color);
-    color = clamp(color, 0.0, 1.0);
-    imageStore(outImage, gid, color);
+    mainImage(fragColor, vec2(gl_FragCoord.xy));
 }
